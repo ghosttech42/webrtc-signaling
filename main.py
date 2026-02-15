@@ -17,6 +17,19 @@ def set_offer(offer: SDP):
     global offer_data
     offer_data = data
     return {"status": "offer saved"}
+ice_candidates = []
+
+@app.post("/ice")
+def post_ice(candidate: dict):
+    ice_candidates.append(candidate)
+    return {"status": "ice saved"}
+
+@app.get("/ice")
+def get_ice():
+    global ice_candidates
+    data = ice_candidates
+    ice_candidates = []
+    return data
 
 @app.get("/offer")
 def get_offer():
