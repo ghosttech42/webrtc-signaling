@@ -5,6 +5,8 @@ app = FastAPI()
 
 # Basit memory signaling (test için yeterli)
 store = {}
+offer_data = None
+answer_data = None
 
 class SDP(BaseModel):
     sdp: str
@@ -12,12 +14,16 @@ class SDP(BaseModel):
 
 @app.post("/offer")
 def set_offer(offer: SDP):
-    store["offer"] = offer
+    global offer_data
+    offer_data = data
     return {"status": "offer saved"}
 
 @app.get("/offer")
 def get_offer():
-    return store.get("offer")
+    global offer_data
+    data = offer_data
+    offer_data = None  # 🔥 KRİTİK
+    return data
 
 @app.post("/answer")
 def set_answer(answer: SDP):
