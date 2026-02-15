@@ -16,6 +16,8 @@ class SDP(BaseModel):
 @app.post("/offer")
 def set_offer(offer: SDP):
     store["offer"] = offer.dict()
+    store["answer"] = None   # 🔥 eski answer'ı sil
+    store["ice"] = []        # 🔥 eski ICE'leri sil
     return {"status": "offer saved"}
 
 @app.get("/offer")
