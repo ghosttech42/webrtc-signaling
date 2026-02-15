@@ -14,15 +14,16 @@ class SDP(BaseModel):
     type: str
 
 @app.post("/offer")
-def set_offer(offer: SDP):
-    store["offer"] = offer.dict()
-    store["answer"] = None   # 🔥 eski answer'ı sil
-    store["ice"] = []        # 🔥 eski ICE'leri sil
-    return {"status": "offer saved"}
+def set_offer(offer: dict):
+    global current_offer
+    current_offer = offer
 
 @app.get("/offer")
 def get_offer():
-    return store["offer"]
+    global current_offer
+    offer = current_offer
+    current_offer = None   # 🔥 KRİTİK SATIR
+    return offer
 
 @app.post("/answer")
 def set_answer(answer: SDP):
