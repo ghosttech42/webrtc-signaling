@@ -68,10 +68,11 @@ async def main():
 
             page.on("response", handle_response)
             await page.goto(
-                f"https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start={i*40}",
+            
+                f"https://store.epicgames.com/graphql?operationName=searchStoreQuery&variables=%7B%22allowCountries%22:%22TR%22,%22category%22:%22games%2Fedition%2Fbase%22,%22comingSoon%22:false,%22count%22:40,%22country%22:%22TR%22,%22keywords%22:%22%22,%22locale%22:%22tr%22,%22sortBy%22:%22releaseDate%22,%22sortDir%22:%22DESC%22,%22start%22:{i*40},%22tag%22:%22%22,%22withPrice%22:true%7D&extensions=%7B%22persistedQuery%22:%7B%22version%22:1,%22sha256Hash%22:%2229d49ab31d438cd90be2d554d2d54704951e4223a8fcd290fcf68308841a1979%22%7D%7D",
                 wait_until="domcontentloaded"
             )
-
+#    f"https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start={i*40}",
         # Sayfanın verileri çekmesi için bekle
             await asyncio.sleep(5)
 
