@@ -3,7 +3,32 @@ import random
 import json
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
+async def graphql_route(route, request):
+    if request.method == "POST":
+        post_data = request.post_data
+        if post_data:
+            try:
+                data = json.loads(post_data)
 
+                # Epic GraphQL değişkenleri
+                variables = data.get("variables", {})
+                variables["country"] = "TR"
+                variables["locale"] = "tr"
+
+                data["variables"] = variables
+
+                await route.continue_(
+                    post_data=json.dumps(data),
+                    headers={
+                        **request.headers,
+                        "Accept-Language": "tr-TR,tr;q=0.9"
+                    }
+                )
+                return
+            except Exception:
+                pass
+
+    await route.continue_()
 async def main():
     async with Stealth().use_async(async_playwright()) as p:
         browser = await p.chromium.launch(headless=True)
@@ -13,21 +38,11 @@ async def main():
             locale="tr-TR",
             timezone_id="Europe/Istanbul"
         )
-        await context.route(
-            "**/graphql",
-            lambda route, request: asyncio.create_task(
-                route.continue_(
-                    headers={
-                        **request.headers,
-                        "Accept-Language": "tr-TR,tr;q=0.9",
-                        "X-Epic-Country": "TR"
-                    }
-                )
-            )
-        )
+        await context.route("**/graphql", graphql_route)
 
         page = await context.new_page()
         state = {"page_count": 90}
+        
         # --- YANITLARI YAKALAYAN FONKSİYON ---
         async def handle_response(response):
             # Sadece GraphQL endpoint'inden gelen ve başarılı (200) yanıtları al
