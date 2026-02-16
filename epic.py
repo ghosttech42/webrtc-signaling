@@ -4,29 +4,32 @@ import json
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 async def graphql_route(route, request):
-    if request.method == "POST":
-        post_data = request.post_data
-        if post_data:
-            try:
-                data = json.loads(post_data)
+    if request.method == "POST" and request.post_data:
+        try:
+            data = json.loads(request.post_data)
 
-                # Epic GraphQL değişkenleri
-                variables = data.get("variables", {})
-                variables["country"] = "TR"
-                variables["locale"] = "tr"
+            variables = data.get("variables", {})
+            variables["country"] = "TR"
+            variables["locale"] = "tr"
+            data["variables"] = variables
 
-                data["variables"] = variables
+            # cache kır
+            if "operationName" in data:
+                data["operationName"] += "_TR"
 
-                await route.continue_(
-                    post_data=json.dumps(data),
-                    headers={
-                        **request.headers,
-                        "Accept-Language": "tr-TR,tr;q=0.9"
-                    }
-                )
-                return
-            except Exception:
-                pass
+            await route.continue_(
+                post_data=json.dumps(data),
+                headers={
+                    **request.headers,
+                    "Accept-Language": "tr-TR,tr;q=0.9",
+                    "X-Epic-Storefront": "TR"
+                }
+            )
+            return
+        except Exception:
+            pass
+
+    await route.continue_()
 
     await route.continue_()
 async def main():
@@ -39,6 +42,14 @@ async def main():
             timezone_id="Europe/Istanbul"
         )
         await context.route("**/graphql", graphql_route)
+        await context.add_cookies([
+        {
+            "name": "storefrontCountry",
+            "value": "TR",
+            "domain": ".epicgames.com",
+            "path": "/"
+        }
+            ])
 
         page = await context.new_page()
         state = {"page_count": 90}
