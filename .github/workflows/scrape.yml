@@ -20,6 +20,7 @@ jobs:
 
       - name: Paketleri yükle
         run: pip install -r requirements.txt
-
+      - name: Playwright browser indir
+        run: playwright install 
       - name: Scraper çalıştır
         run: python epic.py
