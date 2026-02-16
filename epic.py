@@ -6,7 +6,7 @@ from playwright_stealth import Stealth
 
 async def main():
     async with Stealth().use_async(async_playwright()) as p:
-        browser = await p.chromium.launch(headless=False)
+        browser = await p.chromium.launch(headless=True)
         
         context = await browser.new_context(
             viewport={"width": 1920, "height": 1080},
