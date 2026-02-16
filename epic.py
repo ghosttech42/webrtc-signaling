@@ -1,124 +1,89 @@
 import asyncio
+import random
 import json
 from playwright.async_api import async_playwright
-
-# SADECE ÇALIŞAN PROXYLER (Loglardan aldıklarımız)
-PROXY_LIST = [
-    "http://212.175.88.208:8080",   # Türk Telekom
-    "http://212.252.39.103:8080"    # Superonline
-]
-
-async def run_scraper(proxy_url):
-    print(f"\n🔌 Proxy Başlatılıyor: {proxy_url}")
-    
-    async with async_playwright() as p:
-        try:
-            browser = await p.chromium.launch(
-                headless=True, # Arka planda çalışır
-                proxy={"server": proxy_url}
-            )
-            
-            context = await browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-                locale="tr-TR",
-                timezone_id="Europe/Istanbul"
-            )
-            
-            # 60 Saniye sabır süresi (Proxy yavaş olduğu için)
-            context.set_default_timeout(60000)
-
-            # --- 1. MANUEL STEALTH (Robot değiliz) ---
-            await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-            # --- 2. REQUEST INTERCEPTION (TR Zorlama) ---
-            # Epic Games'e giden istekleri yakalayıp "Ben Türkiye'deyim" diye değiştiriyoruz.
-            async def handle_routes(route, request):
-                if request.method == "POST" and "graphql" in request.url:
-                    try:
-                        post_data = json.loads(request.post_data)
-                        variables = post_data.get("variables", {})
-                        if "country" in variables:
-                            variables["country"] = "TR"
-                            variables["locale"] = "tr"
-                            variables["countryCode"] = "TR"
-                            variables["currencyCode"] = "TRY"
-                            post_data["variables"] = variables
-                            await route.continue_(post_data=json.dumps(post_data))
-                            return
-                    except:
-                        pass
-                await route.continue_()
-
-            await context.route("**/*", handle_routes)
-
-            page = await context.new_page()
-
-            # --- 3. PAKET BEKLEYİCİSİ (EN ÖNEMLİ KISIM) ---
-            # Arka planda "graphql" içeren ve başarılı (200) olan yanıtı bekleyen bir "Kapan" kuruyoruz.
-            # Bu kod, veri gelmeden aşağıya inmez!
-            async with page.expect_response(lambda response: "graphql" in response.url and response.status == 200, timeout=60000) as response_info:
-                
-                print("⏳ Siteye gidiliyor ve veri paketi bekleniyor...")
-                # Siteye gitmek isteği tetikler
-                await page.goto("https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40", wait_until="domcontentloaded")
-            
-            # Buraya geldiyse paket yakalanmıştır!
-            response = await response_info.value
-            print(f"📦 Paket Yakalandı! (URL: {response.url[-30:]})")
-            
-            json_data = await response.json()
-            
-            # --- 4. VERİYİ AYIKLAMA ---
-            elements = []
-            if "data" in json_data and "Catalog" in json_data["data"]:
-                cat = json_data["data"]["Catalog"]
-                if "searchStore" in cat:
-                    elements = cat["searchStore"]["elements"]
-                elif "catalogOffers" in cat:
-                    elements = cat["catalogOffers"]["elements"]
-
-            if elements:
-                print(f"✅ JSON İÇİNDEN {len(elements)} OYUN ÇIKARILDI!")
-                
-                clean_list = []
-                for game in elements:
-                    title = game.get("title", "Bilinmiyor")
-                    price_info = game.get("price", {}).get("totalPrice", {}).get("fmtPrice", {})
-                    original_price = price_info.get("originalPrice", "0")
-                    discount_price = price_info.get("discountPrice", "0")
-                    
-                    print(f"   🕹️ {title} -> {original_price}")
-                    
-                    clean_list.append({
-                        "title": title,
-                        "original_price": original_price,
-                        "discount_price": discount_price
-                    })
-
-                # Dosyaya temiz kaydet
-                with open("epic_packet_data.json", "w", encoding="utf-8") as f:
-                    json.dump(clean_list, f, ensure_ascii=False, indent=4)
-                print("💾 Veriler 'epic_packet_data.json' dosyasına kaydedildi.")
-                
-                await browser.close()
-                return True
-            else:
-                print("⚠️ Paket geldi ama içi boş veya yapı farklı.")
-                
-            await browser.close()
-            return False
-
-        except Exception as e:
-            print(f"❌ Hata: {str(e)[:100]}")
-            return False
+from playwright_stealth import Stealth
 
 async def main():
-    for proxy in PROXY_LIST:
-        if await run_scraper(proxy):
-            break
-    else:
-        print("\n😔 İki proxy ile de paket yakalanamadı.")
+    async with Stealth().use_async(async_playwright()) as p:
+        browser = await p.chromium.launch(headless=True)
+
+        context = await browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            locale="tr-TR",
+            timezone_id="Europe/Istanbul"
+        )
+        await context.route(
+            "**/graphql",
+            lambda route, request: asyncio.create_task(
+                route.continue_(
+                    headers={
+                        **request.headers,
+                        "Accept-Language": "tr-TR,tr;q=0.9",
+                        "X-Epic-Country": "TR"
+                    }
+                )
+            )
+        )
+
+        page = await context.new_page()
+        state = {"page_count": 90}
+        # --- YANITLARI YAKALAYAN FONKSİYON ---
+        async def handle_response(response):
+            # Sadece GraphQL endpoint'inden gelen ve başarılı (200) yanıtları al
+            if "graphql" in response.url and response.status == 200:
+
+                try:
+                    # Yanıtın içeriğini JSON olarak al
+                    json_data = await response.json()
+
+                    # Verinin içinde "Catalog" veya "searchStore" var mı kontrol et
+                    # (Epic Games yapısına göre değişebilir, genelde 'data' altındadır)
+                    if "data" in json_data and "Catalog" in json_data["data"]:
+
+                        elements = json_data["data"]["Catalog"]["searchStore"]["elements"]
+                        current_page = state["page_count"] 
+                        with open(f"epic{current_page}.json","w",encoding="utf-8")as f:
+                            json.dump(json_data,f,indent=4,ensure_ascii=False)
+                        print(f"\n--- {len(elements)} ADET OYUN BULUNDU ({response.url[-20:]}...) ---")
+                        # 2. DÜZELTME: Sayacı sözlük üzerinden artırıyoruz
+                        state["page_count"] += 1
+                        for game in elements:
+                            title = game.get("title", "Bilinmiyor")
+                            # Fiyat bazen null olabilir (ücretsiz oyunlar vb.)
+                            price_info = game.get("price", {}).get("totalPrice", {})
+                            price = price_info.get("fmtPrice", {}).get("originalPrice", "0 TL")
+
+                            print(f"Oyun: {title} | Fiyat: {price}")
+                    else:
+                        print(f"veri yok {current_page}")    
+                except Exception as e:
+                    print(e)
+                    # JSON olmayan yanıtlar veya farklı formatlar hataya düşmesin
+                    pass
+
+        # Olay dinleyicisini ekle (Her gelen pakette çalışır)
+        print("Epic Games Mağazası yükleniyor...")
+        for i in range(state["page_count"]-1,96):
+
+            page.on("response", handle_response)
+            await page.goto(
+                f"https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start={i*40}",
+                wait_until="domcontentloaded"
+            )
+
+        # Sayfanın verileri çekmesi için bekle
+            await asyncio.sleep(5)
+
+        # İstersen burada sayfa değiştirebilirsin, listener hala aktif olur.
+        # print("\nSayfa kaydırılıyor/değiştiriliyor...")
+        # await page.goto(
+        #     "https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start=40",
+        #     wait_until="domcontentloaded"
+        # )
+
+        await asyncio.sleep(5)
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
