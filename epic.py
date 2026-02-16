@@ -13,6 +13,19 @@ async def main():
             locale="tr-TR",
             timezone_id="Europe/Istanbul"
         )
+        await context.route(
+            "**/graphql",
+            lambda route, request: asyncio.create_task(
+                route.continue_(
+                    headers={
+                        **request.headers,
+                        "Accept-Language": "tr-TR,tr;q=0.9",
+                        "X-Epic-Country": "TR"
+                    }
+                )
+            )
+        )
+
         page = await context.new_page()
         state = {"page_count": 90}
         # --- YANITLARI YAKALAYAN FONKSİYON ---
