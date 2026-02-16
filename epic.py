@@ -1,122 +1,168 @@
 import asyncio
 import json
+import random
 from playwright.async_api import async_playwright
 from playwright_stealth import Stealth
 
-# --- KAZANAN PROXY ---
-WORKING_PROXY = "http://149.86.140.214:8080" 
+# --- MOCK VERİLERİ (Epic'i kandırmak için) ---
+TR_COUNTRY_INFO = {
+    "data": {
+        "Catalog": {
+            "countryData": {
+                "defaultCurrency": "TRY",
+                "paymentCurrency": "TRY",
+                "currencySymbolPlacement": "LEFT"
+            }
+        }
+    }
+}
+
+TR_CURRENCY_INFO = {
+    "data": {
+        "Catalog": {
+            "currency": {
+                "decimals": 2,
+                "code": "TRY",
+                "symbol": "₺"
+            }
+        }
+    }
+}
 
 async def main():
-    print(f"🚀 Başlatılıyor... Hedef Proxy: {WORKING_PROXY}")
+    print("🚀 Bot Başlatılıyor (Proxy yok, Hızlandırma aktif)...")
     
     async with Stealth().use_async(async_playwright()) as p:
-        try:
-            browser = await p.chromium.launch(
-                headless=True,
-                proxy={"server": WORKING_PROXY}
-            )
+        # Headless=False yaparsan tarayıcıyı görürsün, True yaparsan arka planda çalışır
+        browser = await p.chromium.launch(headless=True)
+        
+        context = await browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            locale="tr-TR",
+            timezone_id="Europe/Istanbul",
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
+        )
+        
+        # Zaman aşımı ayarları (30 saniye)
+        context.set_default_navigation_timeout(30000)
+        context.set_default_timeout(30000)
+
+        # --- AĞ YÖNLENDİRİCİSİ (REQUEST INTERCEPTION) ---
+        # Burası Epic Games'e giden istekleri yakalayıp "Biz TR'deyiz" diyor.
+        async def handle_routes(route, request):
+            url = request.url
+            method = request.method
+            post_data = {}
             
-            # DÜZELTME: request_timeout buradan kaldırıldı.
-            context = await browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                locale="tr-TR",
-                timezone_id="Europe/Istanbul",
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
-            )
+            if method == "POST" and request.post_data:
+                try:
+                    post_data = json.loads(request.post_data)
+                except:
+                    pass
 
-            # DÜZELTME: Timeout ayarları buraya eklendi (90 saniye)
-            context.set_default_navigation_timeout(90000)
-            context.set_default_timeout(90000)
+            # 1. Ülke Bilgisi İsteği
+            if "operationName=getCatalogCountryInfo" in url or post_data.get("operationName") == "getCatalogCountryInfo":
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps(TR_COUNTRY_INFO))
+                return
 
-            await context.add_cookies([
-                {"name": "EPIC_COUNTRY", "value": "TR", "domain": ".epicgames.com", "path": "/"},
-                {"name": "storefrontCountry", "value": "TR", "domain": ".epicgames.com", "path": "/"},
-            ])
+            # 2. Para Birimi İsteği
+            if "operationName=getCatalogCurrencyInfo" in url or post_data.get("operationName") == "getCatalogCurrencyInfo":
+                await route.fulfill(status=200, content_type="application/json", body=json.dumps(TR_CURRENCY_INFO))
+                return
 
-            page = await context.new_page()
+            # 3. Oyun Listesi İsteği (searchStore) - Değişkenleri TR'ye çevir
+            if "graphql" in url and method == "POST":
+                try:
+                    data = json.loads(request.post_data)
+                    variables = data.get("variables", {})
+                    
+                    # Zorla TR yapıyoruz
+                    if "country" in variables or "countryCode" in variables or "locale" in variables:
+                        variables["country"] = "TR"
+                        variables["countryCode"] = "TR"
+                        variables["locale"] = "tr"
+                        variables["currencyCode"] = "TRY"
+                        data["variables"] = variables
+                        
+                        # Modifiye edilmiş isteği gönder
+                        await route.continue_(
+                            post_data=json.dumps(data),
+                            headers={**request.headers, "X-Epic-Storefront": "TR"}
+                        )
+                        return
+                except:
+                    pass
             
-            # Verileri saklayacağımız liste
-            all_games = []
+            # Diğer her şeye izin ver
+            await route.continue_()
 
-            # --- AĞ DİNLEYİCİSİ ---
-            async def handle_response(response):
-                if "graphql" in response.url and response.status == 200:
-                    try:
-                        json_data = await response.json()
-                        if "data" in json_data and "Catalog" in json_data["data"]:
-                            catalog = json_data["data"]["Catalog"]
-                            elements = []
+        # Tüm GraphQL isteklerini dinle
+        await context.route("**/graphql", handle_routes)
+
+        page = await context.new_page()
+
+        # --- VERİ YAKALAYICI (RESPONSE LISTENER) ---
+        async def handle_response(response):
+            if "graphql" in response.url and response.status == 200:
+                try:
+                    json_data = await response.json()
+                    
+                    # Veri yolu bazen değişebilir, iki ihtimali de kontrol edelim
+                    elements = []
+                    if "data" in json_data and "Catalog" in json_data["data"]:
+                        catalog = json_data["data"]["Catalog"]
+                        if "searchStore" in catalog:
+                            elements = catalog["searchStore"]["elements"]
+                        elif "catalogOffers" in catalog:
+                            elements = catalog["catalogOffers"]["elements"]
+
+                    if elements:
+                        print(f"\n✅ {len(elements)} OYUN VERİSİ GELDİ!")
+                        for game in elements:
+                            title = game.get("title", "Bilinmiyor")
                             
-                            if "searchStore" in catalog:
-                                elements = catalog["searchStore"]["elements"]
-                            elif "catalogOffers" in catalog:
-                                elements = catalog["catalogOffers"]["elements"]
+                            # Fiyat Okuma
+                            price_info = game.get("price", {}).get("totalPrice", {})
+                            fmt_price = price_info.get("fmtPrice", {})
+                            original_price = fmt_price.get("originalPrice", "0")
+                            discount_price = fmt_price.get("discountPrice", "0")
                             
-                            if elements:
-                                print(f"📡 Ağdan {len(elements)} oyun verisi yakalandı!")
-                                for game in elements:
-                                    price_info = game.get("price", {}).get("totalPrice", {})
-                                    fmt_price = price_info.get("fmtPrice", {})
-                                    
-                                    game_info = {
-                                        "title": game.get("title"),
-                                        "price": fmt_price.get("originalPrice"),
-                                        "currency": price_info.get("currencyCode"),
-                                        "discount_price": fmt_price.get("discountPrice")
-                                    }
-                                    all_games.append(game_info)
-                                    # Anlık ekrana da basalım ki çalıştığını gör
-                                    print(f"   -> {game_info['title']} : {game_info['price']}")
-                    except:
-                        pass
+                            print(f"   🕹️ {title} -> {original_price} (İndirimli: {discount_price})")
+                            
+                except Exception as e:
+                    # Bazen JSON olmayan yanıtlar gelir, onları görmezden gel
+                    pass
 
-            page.on("response", handle_response)
+        # Response dinleyicisini sayfaya ekle
+        page.on("response", handle_response)
 
-            print("⏳ Epic Games mağazasına bağlanılıyor (Proxy yavaş olabilir, lütfen bekle)...")
+        # --- DÖNGÜ İLE SAYFALARI GEZME ---
+        print("⏳ Epic Games mağazasına bağlanılıyor...")
+        
+        # Kaç sayfa çekeceksin? Örnek: 0'dan 5. sayfaya kadar (Her sayfa 40 oyun)
+        # range(0, 5) yaparsan ilk 200 oyunu çeker.
+        for page_num in range(0, 3): 
+            start_count = page_num * 40
+            print(f"\n--- SAYFA {page_num + 1} (Start: {start_count}) YÜKLENİYOR ---")
             
             try:
-                # İlk sayfaya git
                 await page.goto(
-                    "https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start=0",
+                    f"https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40&start={start_count}",
                     wait_until="domcontentloaded"
                 )
-            except Exception as e:
-                print(f"⚠️ Sayfa tam yüklenemedi ama devam ediliyor: {e}")
-
-            # Sayfa yüklendi mi kontrol et (HTML içinde TL var mı?)
-            try:
-                content = await page.content()
-                if "₺" in content or "TL" in content:
-                    print("✅ BAŞARILI: Fiyatlar TL olarak görünüyor.")
-                elif "$" in content:
-                    print("⚠️ UYARI: Fiyatlar DOLAR görünüyor (Proxy TR olarak algılanmadı).")
-            except:
-                pass
-
-            # Lazy Load tetiklemek için sayfayı aşağı kaydır
-            print("📜 Oyunların yüklenmesi için sayfa kaydırılıyor...")
-            for i in range(1, 6):
-                print(f"   Kaydırma {i}/5...")
-                await page.evaluate("window.scrollBy(0, 800)")
-                # Proxy yavaş olduğu için her kaydırmada 3 saniye bekle
-                await asyncio.sleep(3)
-
-            # --- KAYDETME ---
-            if all_games:
-                print(f"\n🎉 TOPLAM {len(all_games)} OYUN ÇEKİLDİ!")
                 
-                # Dosyaya kaydet
-                with open("oyunlar.json", "w", encoding="utf-8") as f:
-                    json.dump(all_games, f, ensure_ascii=False, indent=4)
-                print("💾 Veriler 'oyunlar.json' dosyasına kaydedildi.")
-            else:
-                print("\n❌ Veri çekilemedi. Proxy sayfayı açtı ama GraphQL verisi yakalanamadı.")
-                print("İpucu: Proxy çok yavaş olduğu için veriler zaman aşımına uğruyor olabilir.")
+                # Sayfanın tam oturması ve verinin akması için bekle
+                await asyncio.sleep(4) 
+                
+                # Lazy load için azıcık aşağı kaydır
+                await page.evaluate("window.scrollBy(0, 500)")
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                print(f"⚠️ Sayfa geçiş hatası: {e}")
 
-            await browser.close()
-
-        except Exception as e:
-            print(f"❌ Kritik Hata: {e}")
+        print("\n🏁 İşlem tamamlandı.")
+        await browser.close()
 
 if __name__ == "__main__":
     asyncio.run(main())
