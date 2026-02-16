@@ -14,7 +14,7 @@ async def main():
             timezone_id="Europe/Istanbul"
         )
         page = await context.new_page()
-        state = {"page_count": 0}
+        state = {"page_count": 90}
         # --- YANITLARI YAKALAYAN FONKSİYON ---
         async def handle_response(response):
             # Sadece GraphQL endpoint'inden gelen ve başarılı (200) yanıtları al
@@ -51,7 +51,7 @@ async def main():
 
         # Olay dinleyicisini ekle (Her gelen pakette çalışır)
         print("Epic Games Mağazası yükleniyor...")
-        for i in range(state["page_count"]-1,2):
+        for i in range(state["page_count"]-1,96):
             
             page.on("response", handle_response)
             await page.goto(
