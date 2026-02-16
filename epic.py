@@ -1,8 +1,6 @@
 import asyncio
 import json
 from playwright.async_api import async_playwright
-# DÜZELTME 1: Stealth class'ı yerine doğrudan fonksiyonu import ediyoruz
-from playwright_stealth import stealth_async
 
 # --- SENİN VERDİĞİN LİSTEDEN TEMİZLENMİŞ PROXYLER ---
 PROXY_LIST = [
@@ -38,11 +36,13 @@ async def run_scraper(proxy_url):
         print(f"\n🔌 Proxy deneniyor: {proxy_url}")
         
         try:
+            # Tarayıcıyı başlat
             browser = await p.chromium.launch(
                 headless=True, 
                 proxy={"server": proxy_url}
             )
             
+            # Context oluştur
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 locale="tr-TR",
@@ -50,17 +50,15 @@ async def run_scraper(proxy_url):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
             )
             
-            # Timeout ayarları
+            # Timeout ayarları (20 saniye yeterli, ölü proxy'de çok beklemeyelim)
             context.set_default_navigation_timeout(20000)
             context.set_default_timeout(20000)
             
-            # Sayfayı oluştur
-            page = await context.new_page()
+            # --- KRİTİK NOKTA: MANUEL STEALTH MODU ---
+            # Harici kütüphane yerine bu kod tarayıcının "otomasyon" olduğunu gizler.
+            await context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
-            # DÜZELTME 2: Stealth modunu basit fonksiyonla aktif ediyoruz
-            await stealth_async(page)
-
-            # --- REQUEST INTERCEPTION ---
+            # --- REQUEST INTERCEPTION (Proxy çalışsa bile TL'yi zorla) ---
             async def handle_routes(route, request):
                 # 1. POST İsteklerindeki Değişkenleri TR yap
                 if request.method == "POST" and "graphql" in request.url:
@@ -73,6 +71,7 @@ async def run_scraper(proxy_url):
                                 variables["country"] = "TR"
                                 variables["countryCode"] = "TR"
                                 variables["locale"] = "tr"
+                                variables["currencyCode"] = "TRY"
                                 data["variables"] = variables
                                 await route.continue_(
                                     post_data=json.dumps(data),
@@ -95,15 +94,18 @@ async def run_scraper(proxy_url):
 
             await context.route("**/*", handle_routes)
 
+            page = await context.new_page()
+
             print("⏳ Siteye bağlanılıyor...")
             await page.goto("https://store.epicgames.com/tr/browse?sortBy=releaseDate&sortDir=DESC&category=Game&count=40", wait_until="domcontentloaded")
             
+            # İçeriği kontrol et
             content = await page.content()
             
             if "₺" in content or "TL" in content:
                 print(f"✅ BAŞARILI! Proxy çalışıyor ve TL fiyatlar görünüyor: {proxy_url}")
             elif "$" in content:
-                print("⚠️ Proxy çalıştı ama DOLAR görünüyor (Yine de veri çekmeyi deneyeceğiz).")
+                print("⚠️ Proxy çalıştı ama DOLAR görünüyor (Mock sistemi devreye girecek, devam ediliyor).")
             else:
                 print("❌ Site yüklenmedi veya fiyatlar görünmüyor.")
                 await browser.close()
@@ -138,12 +140,13 @@ async def run_scraper(proxy_url):
             page.on("response", handle_response)
             
             print("📜 Oyunlar yükleniyor (Scroll)...")
+            # 3 kere aşağı kaydır (daha fazla veri için artırabilirsin)
             for _ in range(3):
                 await page.evaluate("window.scrollBy(0, 1000)")
                 await asyncio.sleep(3)
             
             if all_games:
-                filename = f"epic_games_{proxy_url.split(':')[1].replace('//','')}.json"
+                filename = f"epic_games_result.json"
                 with open(filename, "w", encoding="utf-8") as f:
                     json.dump(all_games, f, ensure_ascii=False, indent=4)
                 print(f"🎉 Toplam {len(all_games)} oyun '{filename}' dosyasına kaydedildi.")
@@ -154,10 +157,9 @@ async def run_scraper(proxy_url):
             return False
 
         except Exception as e:
-            # Hata mesajını sadeleştir
             error_msg = str(e)
             if "Target closed" in error_msg: error_msg = "Bağlantı koptu"
-            elif "Timeout" in error_msg: error_msg = "Zaman aşımı"
+            elif "Timeout" in error_msg: error_msg = "Zaman aşımı (Proxy çok yavaş)"
             print(f"❌ Proxy Hatası ({proxy_url}): {error_msg}")
             return False
 
@@ -170,7 +172,7 @@ async def main():
             print("\n🏁 İşlem başarıyla tamamlandı.")
             break
     else:
-        print("\n😔 Hiçbir proxy ile sağlıklı veri çekilemedi.")
+        print("\n😔 Hiçbir proxy ile sağlıklı veri çekilemedi. Yeni proxy bulman gerekebilir.")
 
 if __name__ == "__main__":
     asyncio.run(main())
