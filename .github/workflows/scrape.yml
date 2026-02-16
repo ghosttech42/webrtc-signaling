@@ -1,0 +1,25 @@
+name: Scraping Cron Job
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # 10 dakikada bir
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Repo'yu checkout et
+        uses: actions/checkout@v4
+
+      - name: Python kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Paketleri yükle
+        run: pip install -r requirements.txt
+
+      - name: Scraper çalıştır
+        run: epic.py
