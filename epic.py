@@ -7,30 +7,34 @@ async def graphql_route(route, request):
     if request.method == "POST" and request.post_data:
         try:
             data = json.loads(request.post_data)
-
             variables = data.get("variables", {})
+            
+            # Ülke ve Dil Ayarları
             variables["country"] = "TR"
             variables["locale"] = "tr"
+            # Bazı sorgular currencyCode ister, bunu da ekleyelim
+            variables["currencyCode"] = "TRY" 
+            
             data["variables"] = variables
 
-            # cache kır
-            if "operationName" in data:
-                data["operationName"] += "_TR"
+            # Rastgele bir Türk Telekom IP'si simüle edelim
+            fake_tr_ip = "88.255.145.23" 
 
             await route.continue_(
                 post_data=json.dumps(data),
                 headers={
                     **request.headers,
                     "Accept-Language": "tr-TR,tr;q=0.9",
-                    "X-Epic-Storefront": "TR"
+                    "X-Epic-Storefront": "TR",
+                    # IP Maskeleme Başlıkları
+                    "X-Forwarded-For": fake_tr_ip,
+                    "X-Real-IP": fake_tr_ip,
+                    "CF-Connecting-IP": fake_tr_ip  # Cloudflare arkasındaysa bazen işe yarar
                 }
             )
             return
         except Exception:
             pass
-
-    await route.continue_()
-
     await route.continue_()
 async def main():
     async with Stealth().use_async(async_playwright()) as p:
